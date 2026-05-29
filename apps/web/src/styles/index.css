@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: #f8fafc;
+  }
+}
+
+@layer components {
+  .markdown-body {
+    @apply text-[15px] leading-7 text-slate-800;
+  }
+
+  .markdown-body p {
+    @apply my-3;
+  }
+
+  .markdown-body p:first-child {
+    @apply mt-0;
+  }
+
+  .markdown-body p:last-child {
+    @apply mb-0;
+  }
+
+  .markdown-body ul,
+  .markdown-body ol {
+    @apply my-3 pl-6;
+  }
+
+  .markdown-body ul {
+    @apply list-disc;
+  }
+
+  .markdown-body ol {
+    @apply list-decimal;
+  }
+
+  .markdown-body code {
+    @apply rounded bg-slate-100 px-1 py-0.5 text-[0.9em] text-slate-900;
+  }
+
+  .markdown-body pre {
+    @apply my-4 overflow-x-auto rounded-lg bg-slate-900 p-4 text-slate-50;
+  }
+
+  .markdown-body pre code {
+    @apply bg-transparent p-0 text-slate-50;
+  }
+
+  .markdown-body table {
+    @apply my-4 w-full border-collapse text-sm;
+  }
+
+  .markdown-body th,
+  .markdown-body td {
+    @apply border border-slate-200 px-3 py-2 align-top;
+  }
+
+  .markdown-body th {
+    @apply bg-slate-100 font-semibold text-slate-900;
+  }
+
+  .markdown-body input[type='checkbox'] {
+    @apply mr-2 align-middle;
+  }
+
+  .markdown-body .katex-display {
+    @apply overflow-x-auto overflow-y-hidden py-2 text-left;
+  }
+}
