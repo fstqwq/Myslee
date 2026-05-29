@@ -20,6 +20,7 @@ LEGACY_PROBLEMS_PATH = BASE_DIR.parent / "hrt_interview_problems.jsonl"
 DEFAULT_DB_PATH = BASE_DIR / "data" / "progress.sqlite3"
 DEFAULT_WEB_DIST_DIR = BASE_DIR / "apps" / "web" / "dist"
 DEFAULT_CONFIG_PATH = BASE_DIR / "config.json"
+VALID_VERDICTS = {"correct", "partial", "wrong", "unknown"}
 
 
 class LLMParseError(RuntimeError):
@@ -128,6 +129,14 @@ def load_llm_config() -> dict[str, Any]:
     }
 
 
+def normalize_verdict(value: object) -> str | None:
+    if isinstance(value, str):
+        verdict = value.strip().lower()
+        if verdict in VALID_VERDICTS:
+            return verdict
+    return None
+
+
 def load_problems(path: Path) -> list[dict[str, Any]]:
     problems: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as handle:
@@ -209,6 +218,50 @@ def ensure_db(db_path: Path) -> None:
             )
             """
         )
+        submission_columns = {
+            column[1] for column in connection.execute("PRAGMA table_info(submissions)").fetchall()
+        }
+        if submission_columns and ("verdict" not in submission_columns or "is_correct" in submission_columns):
+            connection.execute("DROP TABLE IF EXISTS submissions_next")
+            connection.execute(
+                """
+                CREATE TABLE submissions_next (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    problem_id TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    elapsed_ms INTEGER NOT NULL DEFAULT 0,
+                    verdict TEXT NOT NULL DEFAULT 'unknown',
+                    feedback TEXT NOT NULL DEFAULT '',
+                    llm_raw TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            if "verdict" in submission_columns:
+                verdict_expr = (
+                    "CASE "
+                    "WHEN lower(verdict) IN ('correct', 'partial', 'wrong', 'unknown') THEN lower(verdict) "
+                    "ELSE 'unknown' END"
+                )
+            else:
+                verdict_expr = (
+                    "CASE "
+                    "WHEN is_correct = 1 THEN 'correct' "
+                    "WHEN is_correct = 0 THEN 'wrong' "
+                    "ELSE 'unknown' END"
+                )
+            connection.execute(
+                f"""
+                INSERT INTO submissions_next (
+                    id, problem_id, answer, elapsed_ms, verdict, feedback, llm_raw, created_at, updated_at
+                )
+                SELECT id, problem_id, answer, elapsed_ms, {verdict_expr}, feedback, llm_raw, created_at, updated_at
+                FROM submissions
+                """
+            )
+            connection.execute("DROP TABLE submissions")
+            connection.execute("ALTER TABLE submissions_next RENAME TO submissions")
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS submissions (
@@ -216,7 +269,7 @@ def ensure_db(db_path: Path) -> None:
                 problem_id TEXT NOT NULL,
                 answer TEXT NOT NULL,
                 elapsed_ms INTEGER NOT NULL DEFAULT 0,
-                is_correct INTEGER,
+                verdict TEXT NOT NULL DEFAULT 'unknown',
                 feedback TEXT NOT NULL DEFAULT '',
                 llm_raw TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
@@ -257,17 +310,13 @@ def serialize_progress(row: sqlite3.Row | None) -> dict[str, Any]:
 
 
 def serialize_submission(row: sqlite3.Row) -> dict[str, Any]:
-    raw_correct = row["is_correct"]
-    if raw_correct is None:
-        is_correct = None
-    else:
-        is_correct = bool(raw_correct)
+    verdict = normalize_verdict(row["verdict"]) or "unknown"
     return {
         "id": row["id"],
         "problemId": row["problem_id"],
         "answer": row["answer"],
         "elapsedMs": row["elapsed_ms"],
-        "isCorrect": is_correct,
+        "verdict": verdict,
         "feedback": row["feedback"] or "",
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
@@ -279,7 +328,7 @@ def read_submissions_map(db_path: Path) -> dict[str, list[dict[str, Any]]]:
     with closing(connect_db(db_path)) as connection:
         rows = connection.execute(
             """
-            SELECT id, problem_id, answer, elapsed_ms, is_correct, feedback, created_at, updated_at
+            SELECT id, problem_id, answer, elapsed_ms, verdict, feedback, created_at, updated_at
             FROM submissions
             ORDER BY created_at DESC, id DESC
             """
@@ -297,23 +346,26 @@ def create_submission(
     *,
     answer: str,
     elapsed_ms: int,
-    is_correct: bool | None,
+    verdict: str,
     feedback: str,
     llm_raw: str,
 ) -> dict[str, Any]:
     ensure_db(db_path)
     now = utc_now_iso()
+    normalized_verdict = normalize_verdict(verdict)
+    if normalized_verdict is None:
+        raise ValueError("Invalid verdict.")
     with closing(connect_db(db_path)) as connection:
         cursor = connection.execute(
             """
-            INSERT INTO submissions (problem_id, answer, elapsed_ms, is_correct, feedback, llm_raw, created_at, updated_at)
+            INSERT INTO submissions (problem_id, answer, elapsed_ms, verdict, feedback, llm_raw, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 problem_id,
                 answer,
                 elapsed_ms,
-                None if is_correct is None else (1 if is_correct else 0),
+                normalized_verdict,
                 feedback,
                 llm_raw,
                 now,
@@ -323,7 +375,7 @@ def create_submission(
         connection.commit()
         row = connection.execute(
             """
-            SELECT id, problem_id, answer, elapsed_ms, is_correct, feedback, created_at, updated_at
+            SELECT id, problem_id, answer, elapsed_ms, verdict, feedback, created_at, updated_at
             FROM submissions
             WHERE id = ?
             """,
@@ -332,24 +384,27 @@ def create_submission(
     return serialize_submission(row)
 
 
-def patch_submission_correctness(db_path: Path, submission_id: int, is_correct: bool | None) -> dict[str, Any] | None:
+def patch_submission_verdict(db_path: Path, submission_id: int, verdict: str) -> dict[str, Any] | None:
     ensure_db(db_path)
     now = utc_now_iso()
+    normalized_verdict = normalize_verdict(verdict)
+    if normalized_verdict is None:
+        raise ValueError("Invalid verdict.")
     with closing(connect_db(db_path)) as connection:
         cursor = connection.execute(
             """
             UPDATE submissions
-            SET is_correct = ?, updated_at = ?
+            SET verdict = ?, updated_at = ?
             WHERE id = ?
             """,
-            (None if is_correct is None else (1 if is_correct else 0), now, submission_id),
+            (normalized_verdict, now, submission_id),
         )
         connection.commit()
         if cursor.rowcount == 0:
             return None
         row = connection.execute(
             """
-            SELECT id, problem_id, answer, elapsed_ms, is_correct, feedback, created_at, updated_at
+            SELECT id, problem_id, answer, elapsed_ms, verdict, feedback, created_at, updated_at
             FROM submissions
             WHERE id = ?
             """,
@@ -464,15 +519,15 @@ def normalize_submission_payload(payload: object) -> tuple[dict[str, Any] | None
     return {"answer": answer.strip(), "elapsedMs": elapsed_ms}, None
 
 
-def normalize_correctness_payload(payload: object) -> tuple[bool | None, str | None]:
+def normalize_verdict_payload(payload: object) -> tuple[str | None, str | None]:
     if not isinstance(payload, dict):
         return None, "Request body must be a JSON object."
-    if "isCorrect" not in payload:
-        return None, "isCorrect is required."
-    is_correct = payload["isCorrect"]
-    if is_correct is not None and not isinstance(is_correct, bool):
-        return None, "isCorrect must be true, false, or null."
-    return is_correct, None
+    if "verdict" not in payload:
+        return None, "verdict is required."
+    verdict = normalize_verdict(payload["verdict"])
+    if verdict is None:
+        return None, "verdict must be correct, partial, wrong, or unknown."
+    return verdict, None
 
 
 def extract_json_object(text: str) -> dict[str, Any]:
@@ -501,7 +556,7 @@ def judge_answer(problem: dict[str, Any], answer: str) -> dict[str, Any]:
     model = llm_config["model"]
     if not api_key or not model:
         return {
-            "isCorrect": None,
+            "verdict": "unknown",
             "feedback": "LLM is not configured. Set config.json or MYSLEE_LLM_API_KEY and MYSLEE_LLM_MODEL to enable automatic judging.",
             "raw": "",
         }
@@ -518,10 +573,13 @@ def judge_answer(problem: dict[str, Any], answer: str) -> dict[str, Any]:
                     "You are a concise interview-style grader. "
                     "The user may be using speech input or another unreliable typing method, "
                     "so interpret their answer charitably and infer the likely intended content where reasonable. "
-                    "Compare the user's answer against the official solution. "
-                    "Return only JSON with keys isCorrect (boolean) and feedback (string). "
-                    "If the answer is correct, confirm briefly. "
-                    "If the answer is incorrect or unclear, do not reveal the solution or enumerate differences; "
+                    "Compare the user's answer against the official solution, and check any intermediate work or reasoning if provided. "
+                    "Return only JSON with keys verdict (one of correct, partial, wrong, unknown) and feedback (string). "
+                    "Use partial when the final answer is acceptable but the user gives no meaningful process, "
+                    "or when the final answer is acceptable but the provided process contains a clear substantive error. "
+                    "If the verdict is correct, confirm briefly. "
+                    "If the verdict is partial, give one brief interview-style nudge toward fixing the process. "
+                    "If the verdict is wrong or unknown, do not reveal the solution or enumerate differences; "
                     "give one short interview-style hint about the next direction to try."
                 ),
             },
@@ -573,12 +631,10 @@ def judge_answer(problem: dict[str, Any], answer: str) -> dict[str, Any]:
         if not content_text.strip() and finish_reason == "length":
             detail = "LLM response ran out of output tokens before producing JSON."
         raise LLMParseError(detail, raw_response) from exc
-    is_correct = parsed.get("isCorrect")
-    if not isinstance(is_correct, bool):
-        is_correct = None
+    verdict = normalize_verdict(parsed.get("verdict")) or "unknown"
     feedback = parsed.get("feedback")
     return {
-        "isCorrect": is_correct,
+        "verdict": verdict,
         "feedback": feedback if isinstance(feedback, str) else "",
         "raw": content_text,
     }
@@ -657,13 +713,13 @@ def create_app(
             judgment = judge_answer(problem, payload["answer"])
         except LLMParseError as exc:
             judgment = {
-                "isCorrect": None,
+                "verdict": "unknown",
                 "feedback": str(exc),
                 "raw": exc.raw,
             }
         except Exception as exc:
             judgment = {
-                "isCorrect": None,
+                "verdict": "unknown",
                 "feedback": str(exc),
                 "raw": "",
             }
@@ -673,7 +729,7 @@ def create_app(
             problem_id,
             answer=payload["answer"],
             elapsed_ms=payload["elapsedMs"],
-            is_correct=judgment["isCorrect"],
+            verdict=judgment["verdict"],
             feedback=judgment["feedback"],
             llm_raw=judgment["raw"],
         )
@@ -681,11 +737,11 @@ def create_app(
 
     @flask_app.patch("/api/submissions/<int:submission_id>")
     def patch_submission(submission_id: int):
-        is_correct, error = normalize_correctness_payload(request.get_json(silent=True))
+        verdict, error = normalize_verdict_payload(request.get_json(silent=True))
         if error is not None:
             return jsonify({"error": error}), 400
 
-        submission = patch_submission_correctness(current_app.config["DB_PATH"], submission_id, is_correct)
+        submission = patch_submission_verdict(current_app.config["DB_PATH"], submission_id, verdict)
         if submission is None:
             return jsonify({"error": f"Submission '{submission_id}' was not found."}), 404
         return jsonify({"submission": submission})

@@ -22,13 +22,14 @@ export interface ProblemsResponse {
 }
 
 export type ProgressPatch = Partial<Pick<Progress, 'opened' | 'starred' | 'note'>>;
+export type SubmissionVerdict = 'correct' | 'partial' | 'wrong' | 'unknown';
 
 export interface Submission {
   id: number;
   problemId: string;
   answer: string;
   elapsedMs: number;
-  isCorrect: boolean | null;
+  verdict: SubmissionVerdict;
   feedback: string;
   createdAt: string;
   updatedAt: string;

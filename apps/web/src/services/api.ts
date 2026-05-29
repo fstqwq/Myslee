@@ -1,4 +1,4 @@
-import { ProblemsResponse, Progress, ProgressPatch, Submission } from '../types';
+import { ProblemsResponse, Progress, ProgressPatch, Submission, SubmissionVerdict } from '../types';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
 
@@ -51,13 +51,13 @@ export async function submitAnswer(problemId: string, answer: string, elapsedMs:
   return payload.submission;
 }
 
-export async function patchSubmissionCorrectness(
+export async function patchSubmissionVerdict(
   submissionId: number,
-  isCorrect: boolean | null
+  verdict: SubmissionVerdict
 ): Promise<Submission> {
   const payload = await fetchJson<{ submission: Submission }>(`/api/submissions/${submissionId}`, {
     method: 'PATCH',
-    body: JSON.stringify({ isCorrect }),
+    body: JSON.stringify({ verdict }),
   });
   return payload.submission;
 }

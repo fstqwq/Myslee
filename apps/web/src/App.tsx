@@ -12,6 +12,7 @@ import {
   History,
   Lightbulb,
   Lock,
+  Minus,
   PencilLine,
   RefreshCw,
   RotateCcw,
@@ -24,16 +25,17 @@ import {
   X,
 } from 'lucide-react';
 import { MarkdownContent } from './components/MarkdownContent';
-import { fetchProblems, patchProgress, patchSubmissionCorrectness, submitAnswer } from './services/api';
-import { Problem, ProgressPatch, Submission } from './types';
+import { fetchProblems, patchProgress, patchSubmissionVerdict, submitAnswer } from './services/api';
+import { Problem, ProgressPatch, Submission, SubmissionVerdict } from './types';
 
 type AppView = 'library' | 'detail';
-type ResultFilter = 'all' | 'correct' | 'wrong' | 'unknown';
-type ResultState = Exclude<ResultFilter, 'all'>;
+type ResultFilter = 'all' | SubmissionVerdict;
+type ResultState = SubmissionVerdict;
 
 const RESULT_OPTIONS: Array<{ id: ResultFilter; title: string }> = [
   { id: 'all', title: 'All problems' },
   { id: 'correct', title: 'Latest submission correct' },
+  { id: 'partial', title: 'Latest submission partially correct' },
   { id: 'wrong', title: 'Latest submission wrong' },
   { id: 'unknown', title: 'No submission or latest submission unknown' },
 ];
@@ -44,8 +46,7 @@ function latestSubmission(problem: Problem) {
 
 function resultState(problem: Problem): ResultState {
   const submission = latestSubmission(problem);
-  if (submission?.isCorrect === true) return 'correct';
-  if (submission?.isCorrect === false) return 'wrong';
+  if (submission?.verdict) return submission.verdict;
   return 'unknown';
 }
 
@@ -54,6 +55,7 @@ function resultTitle(problem: Problem) {
   const submission = latestSubmission(problem);
   if (!submission) return 'No submission';
   if (state === 'correct') return 'Latest submission correct';
+  if (state === 'partial') return 'Latest submission partially correct';
   if (state === 'wrong') return 'Latest submission wrong';
   return 'Latest submission unknown';
 }
@@ -61,11 +63,13 @@ function resultTitle(problem: Problem) {
 function ResultPill({ state, title }: { state: ResultState; title?: string }) {
   const styles = {
     correct: 'border-emerald-200 bg-emerald-50 text-emerald-600',
+    partial: 'border-amber-200 bg-amber-50 text-amber-600',
     wrong: 'border-red-200 bg-red-50 text-red-600',
     unknown: 'border-violet-200 bg-violet-50 text-violet-600',
   }[state];
   const icon = {
     correct: <Check size={14} strokeWidth={2.6} />,
+    partial: <Minus size={14} strokeWidth={2.8} />,
     wrong: <X size={14} strokeWidth={2.6} />,
     unknown: <CircleHelp size={14} strokeWidth={2.3} />,
   }[state];
@@ -285,11 +289,11 @@ function App() {
     }
   }, []);
 
-  const updateSubmissionCorrectness = useCallback(async (submissionId: number, isCorrect: boolean | null) => {
+  const updateSubmissionVerdict = useCallback(async (submissionId: number, verdict: SubmissionVerdict) => {
     setError(null);
     setSavingSubmissionIds((current) => ({ ...current, [submissionId]: true }));
     try {
-      const saved = await patchSubmissionCorrectness(submissionId, isCorrect);
+      const saved = await patchSubmissionVerdict(submissionId, verdict);
       setProblems((current) =>
         current.map((problem) => ({
           ...problem,
@@ -394,7 +398,7 @@ function App() {
             onSubmitAnswer={(answer, elapsedMs) => (
               selectedProblem ? submitProblemAnswer(selectedProblem.id, answer, elapsedMs) : Promise.resolve(null)
             )}
-            onUpdateSubmissionCorrectness={updateSubmissionCorrectness}
+            onUpdateSubmissionVerdict={updateSubmissionVerdict}
           />
         )}
       </main>
@@ -556,7 +560,7 @@ function DetailView({
   onBack,
   onUpdate,
   onSubmitAnswer,
-  onUpdateSubmissionCorrectness,
+  onUpdateSubmissionVerdict,
 }: {
   problem: Problem | null;
   isLoading: boolean;
@@ -566,7 +570,7 @@ function DetailView({
   onBack: () => void;
   onUpdate: (patch: ProgressPatch, options?: { debounceMs?: number }) => void;
   onSubmitAnswer: (answer: string, elapsedMs: number) => Promise<Submission | null>;
-  onUpdateSubmissionCorrectness: (submissionId: number, isCorrect: boolean | null) => void;
+  onUpdateSubmissionVerdict: (submissionId: number, verdict: SubmissionVerdict) => void;
 }) {
   if (isLoading) {
     return (
@@ -600,7 +604,7 @@ function DetailView({
       onBack={onBack}
       onUpdate={onUpdate}
       onSubmitAnswer={onSubmitAnswer}
-      onUpdateSubmissionCorrectness={onUpdateSubmissionCorrectness}
+      onUpdateSubmissionVerdict={onUpdateSubmissionVerdict}
     />
   );
 }
@@ -613,7 +617,7 @@ function ProblemDetail({
   onBack,
   onUpdate,
   onSubmitAnswer,
-  onUpdateSubmissionCorrectness,
+  onUpdateSubmissionVerdict,
 }: {
   problem: Problem;
   isSaving: boolean;
@@ -622,7 +626,7 @@ function ProblemDetail({
   onBack: () => void;
   onUpdate: (patch: ProgressPatch, options?: { debounceMs?: number }) => void;
   onSubmitAnswer: (answer: string, elapsedMs: number) => Promise<Submission | null>;
-  onUpdateSubmissionCorrectness: (submissionId: number, isCorrect: boolean | null) => void;
+  onUpdateSubmissionVerdict: (submissionId: number, verdict: SubmissionVerdict) => void;
 }) {
   const [hintOpen, setHintOpen] = useState(false);
   const [solutionOpen, setSolutionOpen] = useState(false);
@@ -724,7 +728,7 @@ function ProblemDetail({
             open={submissionsOpen}
             savingSubmissionIds={savingSubmissionIds}
             onToggle={() => setSubmissionsOpen((value) => !value)}
-            onUpdateCorrectness={onUpdateSubmissionCorrectness}
+            onUpdateVerdict={onUpdateSubmissionVerdict}
           />
         </div>
       ) : (
@@ -781,7 +785,7 @@ function ProblemDetail({
               <CurrentSubmissionResult
                 submission={latestSubmission}
                 isSaving={!!savingSubmissionIds[latestSubmission.id]}
-                onUpdateCorrectness={(isCorrect) => onUpdateSubmissionCorrectness(latestSubmission.id, isCorrect)}
+                onUpdateVerdict={(verdict) => onUpdateSubmissionVerdict(latestSubmission.id, verdict)}
               />
             )}
           </section>
@@ -829,7 +833,7 @@ function ProblemDetail({
             open={submissionsOpen}
             savingSubmissionIds={savingSubmissionIds}
             onToggle={() => setSubmissionsOpen((value) => !value)}
-            onUpdateCorrectness={onUpdateSubmissionCorrectness}
+            onUpdateVerdict={onUpdateSubmissionVerdict}
           />
         </div>
       )}
@@ -842,13 +846,13 @@ function SubmissionHistory({
   open,
   savingSubmissionIds,
   onToggle,
-  onUpdateCorrectness,
+  onUpdateVerdict,
 }: {
   submissions: Submission[];
   open: boolean;
   savingSubmissionIds: Record<number, boolean>;
   onToggle: () => void;
-  onUpdateCorrectness: (submissionId: number, isCorrect: boolean | null) => void;
+  onUpdateVerdict: (submissionId: number, verdict: SubmissionVerdict) => void;
 }) {
   return (
     <section className="rounded-lg border border-slate-200">
@@ -877,7 +881,7 @@ function SubmissionHistory({
                   key={submission.id}
                   submission={submission}
                   isSaving={!!savingSubmissionIds[submission.id]}
-                  onUpdateCorrectness={(isCorrect) => onUpdateCorrectness(submission.id, isCorrect)}
+                  onUpdateVerdict={(verdict) => onUpdateVerdict(submission.id, verdict)}
                 />
               ))}
             </div>
@@ -891,11 +895,11 @@ function SubmissionHistory({
 function CurrentSubmissionResult({
   submission,
   isSaving,
-  onUpdateCorrectness,
+  onUpdateVerdict,
 }: {
   submission: Submission;
   isSaving: boolean;
-  onUpdateCorrectness: (isCorrect: boolean | null) => void;
+  onUpdateVerdict: (verdict: SubmissionVerdict) => void;
 }) {
   return (
     <div className="mt-4 rounded-lg border border-fuchsia-100 bg-[linear-gradient(135deg,rgba(255,59,127,0.10),rgba(0,167,255,0.10),rgba(124,58,237,0.08))] px-3 py-3">
@@ -907,7 +911,7 @@ function CurrentSubmissionResult({
           <span className="text-xs font-semibold text-slate-500 tabular-nums">{formatDuration(submission.elapsedMs)}</span>
           {isSaving && <span className="text-xs text-slate-400">Saving...</span>}
         </div>
-        <CorrectnessControls value={submission.isCorrect} onUpdateCorrectness={onUpdateCorrectness} />
+        <VerdictControls value={submission.verdict} onUpdateVerdict={onUpdateVerdict} />
       </div>
       <div className="mt-2 rounded-lg bg-white px-3 py-3">
         {submission.feedback ? (
@@ -923,11 +927,11 @@ function CurrentSubmissionResult({
 function SubmissionCard({
   submission,
   isSaving,
-  onUpdateCorrectness,
+  onUpdateVerdict,
 }: {
   submission: Submission;
   isSaving: boolean;
-  onUpdateCorrectness: (isCorrect: boolean | null) => void;
+  onUpdateVerdict: (verdict: SubmissionVerdict) => void;
 }) {
   return (
     <article className="rounded-lg border border-white/70 bg-white/95 p-4 shadow-sm shadow-violet-950/5">
@@ -939,7 +943,7 @@ function SubmissionCard({
             {isSaving && <span className="text-xs text-slate-400">Saving...</span>}
           </div>
         </div>
-        <CorrectnessControls value={submission.isCorrect} onUpdateCorrectness={onUpdateCorrectness} />
+        <VerdictControls value={submission.verdict} onUpdateVerdict={onUpdateVerdict} />
       </div>
       <div className="mt-3 rounded-lg bg-violet-50/50 px-3 py-3">
         <MarkdownContent>{submission.answer}</MarkdownContent>
@@ -953,44 +957,52 @@ function SubmissionCard({
   );
 }
 
-function CorrectnessControls({
+function VerdictControls({
   value,
-  onUpdateCorrectness,
+  onUpdateVerdict,
 }: {
-  value: boolean | null;
-  onUpdateCorrectness: (isCorrect: boolean | null) => void;
+  value: SubmissionVerdict;
+  onUpdateVerdict: (verdict: SubmissionVerdict) => void;
 }) {
   return (
     <div className="flex shrink-0 gap-1">
-      <CorrectnessButton
-        active={value === false}
+      <VerdictButton
+        active={value === 'wrong'}
         tone="red"
         title="Mark wrong"
-        onClick={() => onUpdateCorrectness(false)}
+        onClick={() => onUpdateVerdict('wrong')}
       >
         <X size={15} strokeWidth={2.6} />
-      </CorrectnessButton>
-      <CorrectnessButton
-        active={value === true}
+      </VerdictButton>
+      <VerdictButton
+        active={value === 'partial'}
+        tone="amber"
+        title="Mark partially correct"
+        onClick={() => onUpdateVerdict('partial')}
+      >
+        <Minus size={15} strokeWidth={2.8} />
+      </VerdictButton>
+      <VerdictButton
+        active={value === 'correct'}
         tone="green"
         title="Mark correct"
-        onClick={() => onUpdateCorrectness(true)}
+        onClick={() => onUpdateVerdict('correct')}
       >
         <Check size={15} strokeWidth={2.6} />
-      </CorrectnessButton>
-      <CorrectnessButton
-        active={value === null}
+      </VerdictButton>
+      <VerdictButton
+        active={value === 'unknown'}
         tone="violet"
         title="Mark unknown"
-        onClick={() => onUpdateCorrectness(null)}
+        onClick={() => onUpdateVerdict('unknown')}
       >
         <CircleHelp size={15} strokeWidth={2.4} />
-      </CorrectnessButton>
+      </VerdictButton>
     </div>
   );
 }
 
-function CorrectnessButton({
+function VerdictButton({
   active,
   tone,
   title,
@@ -998,13 +1010,14 @@ function CorrectnessButton({
   children,
 }: {
   active: boolean;
-  tone: 'red' | 'green' | 'violet';
+  tone: 'red' | 'amber' | 'green' | 'violet';
   title: string;
   onClick: () => void;
   children: ReactNode;
 }) {
   const activeTone = {
     red: 'border-red-200 bg-red-50 text-red-600',
+    amber: 'border-amber-200 bg-amber-50 text-amber-600',
     green: 'border-emerald-200 bg-emerald-50 text-emerald-600',
     violet: 'border-violet-200 bg-violet-50 text-violet-600',
   }[tone];

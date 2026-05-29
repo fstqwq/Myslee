@@ -73,6 +73,51 @@ class MysleeApiTestCase(unittest.TestCase):
         self.assertEqual(payload["problems"][0]["submissions"], [])
         self.assertNotIn("summary", payload)
 
+    def test_existing_submissions_without_verdict_are_migrated(self):
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                """
+                CREATE TABLE submissions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    problem_id TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    elapsed_ms INTEGER NOT NULL DEFAULT 0,
+                    is_correct INTEGER,
+                    feedback TEXT NOT NULL DEFAULT '',
+                    llm_raw TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO submissions (
+                    problem_id, answer, elapsed_ms, is_correct, feedback, llm_raw, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("myslee-001", "Old answer", 1000, 0, "Old feedback", "{}", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        response = self.client.get("/api/problems")
+
+        self.assertEqual(response.status_code, 200)
+        submission = response.get_json()["problems"][0]["submissions"][0]
+        self.assertEqual(submission["verdict"], "wrong")
+        self.assertNotIn("isCorrect", submission)
+        connection = sqlite3.connect(self.db_path)
+        try:
+            columns = {column[1] for column in connection.execute("PRAGMA table_info(submissions)").fetchall()}
+        finally:
+            connection.close()
+        self.assertIn("verdict", columns)
+        self.assertNotIn("is_correct", columns)
+
     def test_patch_progress_persists(self):
         response = self.client.patch(
             "/api/progress/myslee-001",
@@ -150,7 +195,10 @@ class MysleeApiTestCase(unittest.TestCase):
                             {
                                 "message": {
                                     "content": json.dumps(
-                                        {"isCorrect": False, "feedback": "Try conditioning on the first event."}
+                                        {
+                                            "verdict": "partial",
+                                            "feedback": "Check the variance step in your reasoning.",
+                                        }
                                     )
                                 }
                             }
@@ -175,13 +223,17 @@ class MysleeApiTestCase(unittest.TestCase):
                     "spoken-ish answer",
                 )
 
-        self.assertEqual(result["feedback"], "Try conditioning on the first event.")
+        self.assertEqual(result["verdict"], "partial")
+        self.assertNotIn("isCorrect", result)
+        self.assertEqual(result["feedback"], "Check the variance step in your reasoning.")
         self.assertEqual(captured["url"], "https://llm.test/chat/completions")
         self.assertEqual(captured["timeout"], 7.0)
         self.assertEqual(captured["body"]["response_format"], {"type": "json_object"})
         self.assertEqual(captured["body"]["max_tokens"], 1024)
         system_prompt = captured["body"]["messages"][0]["content"]
         self.assertIn("speech input", system_prompt)
+        self.assertIn("intermediate work", system_prompt)
+        self.assertIn("partial", system_prompt)
         self.assertIn("interview-style hint", system_prompt)
 
     def test_load_llm_config_reads_json_file(self):
@@ -291,7 +343,8 @@ class MysleeApiTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         submission = response.get_json()["submission"]
-        self.assertIsNone(submission["isCorrect"])
+        self.assertEqual(submission["verdict"], "unknown")
+        self.assertNotIn("isCorrect", submission)
         self.assertEqual(submission["feedback"], "LLM response ran out of output tokens before producing JSON.")
 
         connection = sqlite3.connect(self.db_path)
@@ -305,7 +358,11 @@ class MysleeApiTestCase(unittest.TestCase):
         with patch.object(
             myslee_app,
             "judge_answer",
-            return_value={"isCorrect": True, "feedback": "Looks correct.", "raw": '{"isCorrect":true}'},
+            return_value={
+                "verdict": "correct",
+                "feedback": "Looks correct.",
+                "raw": '{"verdict":"correct"}',
+            },
         ) as judge_mock:
             response = self.client.post(
                 "/api/problems/myslee-001/submissions",
@@ -317,7 +374,8 @@ class MysleeApiTestCase(unittest.TestCase):
         self.assertEqual(submission["problemId"], "myslee-001")
         self.assertEqual(submission["answer"], "Use symmetry.")
         self.assertEqual(submission["elapsedMs"], 12345)
-        self.assertTrue(submission["isCorrect"])
+        self.assertEqual(submission["verdict"], "correct")
+        self.assertNotIn("isCorrect", submission)
         self.assertEqual(submission["feedback"], "Looks correct.")
         judge_mock.assert_called_once()
 
@@ -325,12 +383,13 @@ class MysleeApiTestCase(unittest.TestCase):
         submissions = response.get_json()["problems"][0]["submissions"]
         self.assertEqual(len(submissions), 1)
         self.assertEqual(submissions[0]["answer"], "Use symmetry.")
+        self.assertEqual(submissions[0]["verdict"], "correct")
 
-    def test_patch_submission_correctness(self):
+    def test_patch_submission_verdict(self):
         with patch.object(
             myslee_app,
             "judge_answer",
-            return_value={"isCorrect": None, "feedback": "Unknown.", "raw": "{}"},
+            return_value={"verdict": "unknown", "feedback": "Unknown.", "raw": "{}"},
         ):
             response = self.client.post(
                 "/api/problems/myslee-001/submissions",
@@ -338,14 +397,19 @@ class MysleeApiTestCase(unittest.TestCase):
             )
         submission_id = response.get_json()["submission"]["id"]
 
-        response = self.client.patch(f"/api/submissions/{submission_id}", json={"isCorrect": False})
+        response = self.client.patch(f"/api/submissions/{submission_id}", json={"verdict": "partial"})
 
         self.assertEqual(response.status_code, 200)
-        self.assertFalse(response.get_json()["submission"]["isCorrect"])
+        self.assertEqual(response.get_json()["submission"]["verdict"], "partial")
+        self.assertNotIn("isCorrect", response.get_json()["submission"])
+
+        response = self.client.patch(f"/api/submissions/{submission_id}", json={"verdict": "wrong"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["submission"]["verdict"], "wrong")
 
         response = self.client.patch(f"/api/submissions/{submission_id}", json={"isCorrect": None})
-        self.assertEqual(response.status_code, 200)
-        self.assertIsNone(response.get_json()["submission"]["isCorrect"])
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("verdict is required", response.get_json()["error"])
 
 
 if __name__ == "__main__":
