@@ -712,31 +712,7 @@ function ProblemDetail({
               <span className="text-xs font-medium text-violet-500/80">{isSaving ? 'Saving...' : formatUpdatedAt(problem.progress.updatedAt)}</span>
             </div>
             <h2 className="mt-3 text-2xl font-semibold tracking-tight text-violet-950 sm:text-3xl">{problem.name}</h2>
-            {problem.tags.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {problem.tags.map((tag) => (
-                  <TagPill key={tag}>{tag}</TagPill>
-                ))}
-              </div>
-            )}
           </div>
-
-          {!isLocked && (
-            <div className="flex justify-end">
-              <div className="flex shrink-0 items-center gap-2 rounded-lg border border-cyan-200 bg-white/75 px-3 py-2 text-sm font-semibold text-cyan-700 shadow-sm shadow-cyan-500/10">
-                <Timer size={16} />
-                <span className="tabular-nums">{formatDuration(elapsedMs)}</span>
-                <button
-                  type="button"
-                  onClick={resetTimer}
-                  title="Reset timer"
-                  className="ml-1 rounded-md p-1 text-violet-500 transition hover:bg-white hover:text-violet-800"
-                >
-                  <RotateCcw size={14} />
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
@@ -774,20 +750,32 @@ function ProblemDetail({
               className="min-h-36 w-full resize-y rounded-lg border border-fuchsia-100 bg-white px-3 py-3 text-sm leading-6 text-slate-800 outline-none transition focus:border-fuchsia-400 focus:ring-4 focus:ring-fuchsia-500/10"
               placeholder="Write your answer"
             />
-            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-2 text-sm text-slate-500">
-                <Timer size={16} />
-                <span className="tabular-nums">{formatDuration(elapsedMs)}</span>
+            <div className="mt-3 flex items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="flex items-center gap-1.5 text-sm font-medium text-slate-500">
+                  <Timer size={16} />
+                  <span className="tabular-nums">{formatDuration(elapsedMs)}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={resetTimer}
+                  title="Reset timer"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-cyan-100 bg-white text-violet-600 shadow-sm shadow-violet-500/10 transition hover:border-violet-200 hover:bg-violet-50"
+                >
+                  <RotateCcw size={16} />
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => void handleSubmit()}
-                disabled={!answer.trim() || isSubmitting}
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-[linear-gradient(90deg,#ff3b7f,#7c3aed,#00a7ff)] px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-fuchsia-500/20 transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <Send size={16} />
-                {isSubmitting ? 'Submitting...' : 'Submit'}
-              </button>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleSubmit()}
+                  disabled={!answer.trim() || isSubmitting}
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[linear-gradient(90deg,#ff3b7f,#7c3aed,#00a7ff)] px-3 text-sm font-semibold text-white shadow-sm shadow-fuchsia-500/20 transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60 sm:px-4"
+                >
+                  <Send size={16} />
+                  {isSubmitting ? 'Submitting...' : 'Submit'}
+                </button>
+              </div>
             </div>
             {latestSubmission && (
               <CurrentSubmissionResult
@@ -826,6 +814,13 @@ function ProblemDetail({
             open={solutionOpen}
             onToggle={() => setSolutionOpen((value) => !value)}
           >
+            {problem.tags.length > 0 && (
+              <div className="mb-3 flex flex-wrap gap-1.5">
+                {problem.tags.map((tag) => (
+                  <TagPill key={tag}>{tag}</TagPill>
+                ))}
+              </div>
+            )}
             <MarkdownContent>{problem.solution}</MarkdownContent>
           </RevealPanel>
 
