@@ -3,6 +3,8 @@ import {
   AlertCircle,
   ArrowLeft,
   BookOpen,
+  ChevronLeft,
+  ChevronRight,
   Check,
   CheckCircle2,
   CircleHelp,
@@ -213,6 +215,13 @@ function App() {
     () => problems.find((problem) => problem.id === selectedId) ?? null,
     [problems, selectedId]
   );
+  const selectedIndex = useMemo(
+    () => (selectedId ? problems.findIndex((problem) => problem.id === selectedId) : -1),
+    [problems, selectedId]
+  );
+  const previousProblem = selectedIndex > 0 ? problems[selectedIndex - 1] : null;
+  const nextProblem =
+    selectedIndex >= 0 && selectedIndex < problems.length - 1 ? problems[selectedIndex + 1] : null;
 
   const saveProgress = useCallback(async (problemId: string, patch: ProgressPatch) => {
     setSavingIds((current) => ({ ...current, [problemId]: true }));
@@ -393,11 +402,14 @@ function App() {
         {view === 'detail' && (
           <DetailView
             problem={selectedProblem}
+            previousProblem={previousProblem}
+            nextProblem={nextProblem}
             isLoading={isLoading}
             isSaving={selectedProblem ? !!savingIds[selectedProblem.id] : false}
             isSubmitting={selectedProblem ? !!submittingIds[selectedProblem.id] : false}
             savingSubmissionIds={savingSubmissionIds}
             onBack={goLibrary}
+            onNavigateProblem={openProblem}
             onUpdate={(patch, options) => {
               if (selectedProblem) updateProgress(selectedProblem.id, patch, options);
             }}
@@ -559,21 +571,27 @@ function ProblemRow({ problem, onOpen }: { problem: Problem; onOpen: () => void 
 
 function DetailView({
   problem,
+  previousProblem,
+  nextProblem,
   isLoading,
   isSaving,
   isSubmitting,
   savingSubmissionIds,
   onBack,
+  onNavigateProblem,
   onUpdate,
   onSubmitAnswer,
   onUpdateSubmissionVerdict,
 }: {
   problem: Problem | null;
+  previousProblem: Problem | null;
+  nextProblem: Problem | null;
   isLoading: boolean;
   isSaving: boolean;
   isSubmitting: boolean;
   savingSubmissionIds: Record<number, boolean>;
   onBack: () => void;
+  onNavigateProblem: (problemId: string) => void;
   onUpdate: (patch: ProgressPatch, options?: { debounceMs?: number }) => void;
   onSubmitAnswer: (answer: string, elapsedMs: number) => Promise<Submission | null>;
   onUpdateSubmissionVerdict: (submissionId: number, verdict: SubmissionVerdict) => void;
@@ -604,10 +622,13 @@ function DetailView({
   return (
     <ProblemDetail
       problem={problem}
+      previousProblem={previousProblem}
+      nextProblem={nextProblem}
       isSaving={isSaving}
       isSubmitting={isSubmitting}
       savingSubmissionIds={savingSubmissionIds}
       onBack={onBack}
+      onNavigateProblem={onNavigateProblem}
       onUpdate={onUpdate}
       onSubmitAnswer={onSubmitAnswer}
       onUpdateSubmissionVerdict={onUpdateSubmissionVerdict}
@@ -617,19 +638,25 @@ function DetailView({
 
 function ProblemDetail({
   problem,
+  previousProblem,
+  nextProblem,
   isSaving,
   isSubmitting,
   savingSubmissionIds,
   onBack,
+  onNavigateProblem,
   onUpdate,
   onSubmitAnswer,
   onUpdateSubmissionVerdict,
 }: {
   problem: Problem;
+  previousProblem: Problem | null;
+  nextProblem: Problem | null;
   isSaving: boolean;
   isSubmitting: boolean;
   savingSubmissionIds: Record<number, boolean>;
   onBack: () => void;
+  onNavigateProblem: (problemId: string) => void;
   onUpdate: (patch: ProgressPatch, options?: { debounceMs?: number }) => void;
   onSubmitAnswer: (answer: string, elapsedMs: number) => Promise<Submission | null>;
   onUpdateSubmissionVerdict: (submissionId: number, verdict: SubmissionVerdict) => void;
@@ -692,15 +719,43 @@ function ProblemDetail({
     <article className="overflow-hidden rounded-lg border border-fuchsia-100 bg-white shadow-sm shadow-fuchsia-950/5">
       <div className="border-b border-fuchsia-100 bg-[linear-gradient(135deg,rgba(255,59,127,0.10),rgba(0,167,255,0.09),rgba(124,58,237,0.08))] px-4 py-4 sm:px-5">
         <div className="flex flex-col gap-4">
-          <div className="flex items-center justify-between gap-3">
-            <button
-              type="button"
-              onClick={onBack}
-              className="inline-flex items-center gap-2 rounded-lg border border-fuchsia-100 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-fuchsia-50"
-            >
-              <ArrowLeft size={16} />
-              List
-            </button>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={onBack}
+                className="inline-flex h-10 items-center gap-2 rounded-lg border border-fuchsia-100 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-fuchsia-50"
+              >
+                <ArrowLeft size={16} />
+                List
+              </button>
+              <button
+                type="button"
+                title={previousProblem ? `Previous: ${previousProblem.name}` : 'No previous problem'}
+                aria-label={previousProblem ? `Previous problem: ${previousProblem.name}` : 'No previous problem'}
+                disabled={!previousProblem}
+                onClick={() => {
+                  if (previousProblem) onNavigateProblem(previousProblem.id);
+                }}
+                className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-cyan-100 bg-white px-2.5 text-sm font-semibold text-slate-700 transition hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-40 sm:px-3"
+              >
+                <ChevronLeft size={16} />
+                <span className="hidden sm:inline">Prev</span>
+              </button>
+              <button
+                type="button"
+                title={nextProblem ? `Next: ${nextProblem.name}` : 'No next problem'}
+                aria-label={nextProblem ? `Next problem: ${nextProblem.name}` : 'No next problem'}
+                disabled={!nextProblem}
+                onClick={() => {
+                  if (nextProblem) onNavigateProblem(nextProblem.id);
+                }}
+                className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-cyan-100 bg-white px-2.5 text-sm font-semibold text-slate-700 transition hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-40 sm:px-3"
+              >
+                <span className="hidden sm:inline">Next</span>
+                <ChevronRight size={16} />
+              </button>
+            </div>
             <button
               type="button"
               title={problem.progress.starred ? 'Unstar' : 'Star'}
