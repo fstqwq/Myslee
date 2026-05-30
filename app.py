@@ -16,7 +16,6 @@ from flask_cors import CORS
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_PROBLEMS_PATH = BASE_DIR / "problems" / "hrt_interview_problems.jsonl"
-LEGACY_PROBLEMS_PATH = BASE_DIR.parent / "hrt_interview_problems.jsonl"
 DEFAULT_DB_PATH = BASE_DIR / "data" / "progress.sqlite3"
 DEFAULT_WEB_DIST_DIR = BASE_DIR / "apps" / "web" / "dist"
 DEFAULT_CONFIG_PATH = BASE_DIR / "config.json"
@@ -34,13 +33,11 @@ def utc_now_iso() -> str:
 
 
 def problem_id_for_index(index: int) -> str:
-    return f"myslee-{index:03d}"
+    return f"{index:03d}"
 
 
 def default_problems_path() -> Path:
-    if DEFAULT_PROBLEMS_PATH.is_file():
-        return DEFAULT_PROBLEMS_PATH
-    return LEGACY_PROBLEMS_PATH
+    return DEFAULT_PROBLEMS_PATH
 
 
 def load_config() -> dict[str, Any]:
@@ -172,41 +169,6 @@ def load_problems(path: Path) -> list[dict[str, Any]]:
 def ensure_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with closing(sqlite3.connect(db_path)) as connection:
-        columns = connection.execute("PRAGMA table_info(progress)").fetchall()
-        if columns:
-            column_names = {column[1] for column in columns}
-            expected_columns = {"problem_id", "opened", "starred", "note", "updated_at"}
-            if "opened" not in column_names or not column_names.issubset(expected_columns):
-                connection.execute("DROP TABLE IF EXISTS progress_next")
-                connection.execute(
-                    """
-                    CREATE TABLE progress_next (
-                        problem_id TEXT PRIMARY KEY,
-                        opened INTEGER NOT NULL DEFAULT 0,
-                        starred INTEGER NOT NULL DEFAULT 0,
-                        note TEXT NOT NULL DEFAULT '',
-                        updated_at TEXT NOT NULL
-                    )
-                    """
-                )
-                if "opened" in column_names:
-                    connection.execute(
-                        """
-                        INSERT OR REPLACE INTO progress_next (problem_id, opened, starred, note, updated_at)
-                        SELECT problem_id, opened, starred, note, updated_at
-                        FROM progress
-                        """
-                    )
-                else:
-                    connection.execute(
-                        """
-                        INSERT OR REPLACE INTO progress_next (problem_id, opened, starred, note, updated_at)
-                        SELECT problem_id, 1, starred, note, updated_at
-                        FROM progress
-                        """
-                    )
-                connection.execute("DROP TABLE progress")
-                connection.execute("ALTER TABLE progress_next RENAME TO progress")
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS progress (
@@ -218,50 +180,6 @@ def ensure_db(db_path: Path) -> None:
             )
             """
         )
-        submission_columns = {
-            column[1] for column in connection.execute("PRAGMA table_info(submissions)").fetchall()
-        }
-        if submission_columns and ("verdict" not in submission_columns or "is_correct" in submission_columns):
-            connection.execute("DROP TABLE IF EXISTS submissions_next")
-            connection.execute(
-                """
-                CREATE TABLE submissions_next (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    problem_id TEXT NOT NULL,
-                    answer TEXT NOT NULL,
-                    elapsed_ms INTEGER NOT NULL DEFAULT 0,
-                    verdict TEXT NOT NULL DEFAULT 'unknown',
-                    feedback TEXT NOT NULL DEFAULT '',
-                    llm_raw TEXT NOT NULL DEFAULT '',
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-                """
-            )
-            if "verdict" in submission_columns:
-                verdict_expr = (
-                    "CASE "
-                    "WHEN lower(verdict) IN ('correct', 'partial', 'wrong', 'unknown') THEN lower(verdict) "
-                    "ELSE 'unknown' END"
-                )
-            else:
-                verdict_expr = (
-                    "CASE "
-                    "WHEN is_correct = 1 THEN 'correct' "
-                    "WHEN is_correct = 0 THEN 'wrong' "
-                    "ELSE 'unknown' END"
-                )
-            connection.execute(
-                f"""
-                INSERT INTO submissions_next (
-                    id, problem_id, answer, elapsed_ms, verdict, feedback, llm_raw, created_at, updated_at
-                )
-                SELECT id, problem_id, answer, elapsed_ms, {verdict_expr}, feedback, llm_raw, created_at, updated_at
-                FROM submissions
-                """
-            )
-            connection.execute("DROP TABLE submissions")
-            connection.execute("ALTER TABLE submissions_next RENAME TO submissions")
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS submissions (

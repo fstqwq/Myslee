@@ -60,6 +60,12 @@ function resultTitle(problem: Problem) {
   return 'Latest submission unknown';
 }
 
+function triesToFirstCorrect(problem: Problem) {
+  const submissions = [...(problem.submissions ?? [])].reverse();
+  const firstCorrectIndex = submissions.findIndex((submission) => submission.verdict === 'correct');
+  return firstCorrectIndex >= 0 ? firstCorrectIndex + 1 : null;
+}
+
 function ResultPill({ state, title }: { state: ResultState; title?: string }) {
   const styles = {
     correct: 'border-emerald-200 bg-emerald-50 text-emerald-600',
@@ -636,6 +642,7 @@ function ProblemDetail({
   const [elapsedMs, setElapsedMs] = useState(0);
   const timerStartRef = useRef<number | null>(null);
   const isLocked = !problem.progress.opened;
+  const firstCorrectTries = triesToFirstCorrect(problem);
 
   useEffect(() => {
     setHintOpen(false);
@@ -711,9 +718,14 @@ function ProblemDetail({
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full border border-fuchsia-200 bg-white/80 px-3 py-1 text-xs font-semibold text-fuchsia-700 shadow-sm shadow-fuchsia-500/10">
-                #{String(problem.index).padStart(2, '0')}
+                #{problem.id}
               </span>
               <span className="text-xs font-medium text-violet-500/80">{isSaving ? 'Saving...' : formatUpdatedAt(problem.progress.updatedAt)}</span>
+              {firstCorrectTries !== null && (
+                <span className="rounded-full border border-emerald-100 bg-white/80 px-3 py-1 text-xs font-semibold text-emerald-600 shadow-sm shadow-emerald-500/10">
+                  {firstCorrectTries} {firstCorrectTries === 1 ? 'try' : 'tries'}
+                </span>
+              )}
             </div>
             <h2 className="mt-3 text-2xl font-semibold tracking-tight text-violet-950 sm:text-3xl">{problem.name}</h2>
           </div>
